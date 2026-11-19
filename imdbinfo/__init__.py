@@ -39,6 +39,7 @@ Main Functions
 --------------
 - :func:`.search_title` — Search for titles and people
 - :func:`.get_movie` — Fetch title details (movie, TV series, episode)
+- :func:`.get_series_creators` — Fetch creators from a series' full writer credits
 - :func:`.get_name` — Fetch person biography and filmography
 - :func:`.get_awards` — Fetch awards and nominations
 - :func:`.get_season_episodes` — Fetch episodes for a specific season
@@ -73,6 +74,7 @@ import logging
 
 from .services import (
     get_movie,
+    get_series_creators,
     get_awards,
     search_title,
     get_name,
@@ -107,6 +109,7 @@ from .exceptions import (
 
 __all__ = [
     "get_movie",
+    "get_series_creators",
     "get_awards",
     "search_title",
     "get_name",

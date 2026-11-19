@@ -65,6 +65,11 @@ COMPANY_URL = "https://www.imdb.com/company/"
 CREATOR_CREDIT_GROUP_ID = (
     "amzn1.imdb.concept.name_credit_group.85198717-6c2d-481e-93a5-47858774bcce"
 )
+_SERIES_CREATOR_ROLES = frozenset({
+    "created by",
+    "created for television by",
+    "created for tv by",
+})
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +178,23 @@ def _parse_creators(principal_credits_groups) -> List[Person]:
         for credit in (group.get("credits") or [])
         if credit and (credit.get("name") or {}).get("id")
     ]
+
+
+def parse_series_creator_credits(credit_edges) -> List[Person]:
+    """Extract explicit series creators from an English writer credits page."""
+    creators = []
+    for edge in credit_edges:
+        credit = edge["node"]
+        roles = credit["creditedRoles"]["edges"]
+        if not isinstance(roles, list):
+            raise ValueError("Invalid credited roles")
+        labels = (role["node"]["text"] for role in roles)
+        if any(
+            label is not None and label.strip().casefold() in _SERIES_CREATOR_ROLES
+            for label in labels
+        ):
+            creators.append(Person.from_creators(credit))
+    return creators
 
 
 def _parse_credits(result) -> dict:

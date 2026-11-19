@@ -35,6 +35,7 @@ from .exceptions import HTTPError, WAFError, GraphQLError, ParseError
 from .models import (
     SearchResult,
     MovieDetail,
+    Person,
     SeasonEpisodesList,
     PersonDetail,
     AkasData,
@@ -43,7 +44,9 @@ from .models import (
     Award,
 )
 from .parsers import (
+    OldCategoryIdToNewCategoryIdObject,
     parse_json_movie,
+    parse_series_creator_credits,
     parse_json_search,
     parse_json_person_detail,
     parse_json_season_episodes,
@@ -65,6 +68,30 @@ IMPERSONATE = "chrome"
 logger = logging.getLogger(__name__)
 
 GRAPHQL_URL = "https://api.graphql.imdb.com/"
+
+_SERIES_WRITER_CREDITS_QUERY = """
+query TitleCreditPaginationV2WithLocale(
+  $tconst: ID!, $after: ID, $first: Int!, $category: ID!, $locale: ID
+) {
+  title(id: $tconst) {
+    creditsV2(
+      after: $after
+      first: $first
+      filter: {creditLevelFilter: {groupings: [$category], locale: $locale}}
+      useEntitlement: false
+      aggregateBy: {aggregationType: "NAME_WITHOUT_ORDERABLE_GROUPS"}
+    ) {
+      pageInfo { hasNextPage endCursor }
+      edges {
+        node {
+          name { id nameText { text } }
+          creditedRoles(first: 250) { edges { node { text } } }
+        }
+      }
+    }
+  }
+}
+"""
 
 _WAF_COOKIE_FILE = Path.cwd() / ".cache" / "imdbinfo" / "waf_cookies.json"
 
@@ -331,10 +358,10 @@ def request_handler(url: str) -> Any:
     return resp
 
 
-def request_graphql_url(headers, search_term, payload, url) -> Any:
+def request_graphql_url(headers, search_term, payload, url, **request_options) -> Any:
     # IMDb's GraphQL endpoint returns HTTP 403 without a browser Referer.
     headers = {"Referer": "https://www.imdb.com/", **headers}
-    resp = niquests.post(url, headers=headers, json=payload)
+    resp = niquests.post(url, headers=headers, json=payload, **request_options)
     if resp.status_code != 200:
         logger.error("GraphQL request failed: %s", resp.status_code)
         raise GraphQLError(
@@ -354,6 +381,74 @@ def request_graphql_url(headers, search_term, payload, url) -> Any:
             errors=data["errors"],
         )
     return data
+
+
+@lru_cache(maxsize=128)
+def get_series_creators(imdb_id: str) -> List[Person]:
+    """Fetch series creators from all pages of a title's IMDb writer credits.
+
+    Accepts a title ID with or without the ``tt`` prefix. Writer role labels
+    are requested in English regardless of the configured title locale.
+    Only explicit creator roles count. Returns an empty list if there are
+    no such credits and raises GraphQLError or ParseError if a page fails.
+    """
+    numeric_id, _ = normalize_imdb_id(imdb_id, locale="en")
+    title_id = f"tt{numeric_id}"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/graphql+json, application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://www.imdb.com",
+        "x-imdb-client-name": "imdb-web-next",
+        "x-imdb-user-language": "en-US",
+        "x-imdb-user-country": "US",
+    }
+    creators: Dict[str, Person] = {}
+    seen_cursors = set()
+    cursor = None
+
+    while True:
+        payload = {
+            "operationName": "TitleCreditPaginationV2WithLocale",
+            "query": _SERIES_WRITER_CREDITS_QUERY,
+            "variables": {
+                "tconst": title_id,
+                "after": cursor,
+                "first": 10,
+                "category": OldCategoryIdToNewCategoryIdObject["writer"],
+                "locale": "DEFAULT",
+            },
+        }
+        try:
+            response = request_graphql_url(headers, title_id, payload, GRAPHQL_URL, timeout=15)
+        except (OSError, ValueError, TypeError) as exc:
+            raise GraphQLError(
+                f"Could not fetch writer credits for {title_id}: {exc}",
+                url=GRAPHQL_URL,
+                query_term=title_id,
+            ) from exc
+        try:
+            credits = response["data"]["title"]["creditsV2"]
+            page_info = credits["pageInfo"]
+            edges = credits["edges"]
+            has_next_page = page_info["hasNextPage"]
+            if not isinstance(edges, list) or not isinstance(has_next_page, bool):
+                raise ValueError("Invalid edges or hasNextPage")
+            for creator in parse_series_creator_credits(edges):
+                creators.setdefault(creator.imdbId, creator)
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise ParseError(
+                f"Invalid writer credits page for {title_id}: {exc}", url=GRAPHQL_URL
+            ) from exc
+
+        if not has_next_page:
+            return list(creators.values())
+        cursor = page_info.get("endCursor")
+        if not isinstance(cursor, str) or not cursor or cursor in seen_cursors:
+            raise ParseError(
+                f"Missing or repeated writer credits cursor for {title_id}", url=GRAPHQL_URL
+            )
+        seen_cursors.add(cursor)
 
 
 @lru_cache(maxsize=128)
