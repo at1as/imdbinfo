@@ -160,6 +160,39 @@ def test_parse_json_series():
     assert "cast" in series.categories
 
 
+def test_parse_json_series_with_stars_only_has_no_creators():
+    raw_json = load_sample("sample_series.json")
+    main_column = raw_json["props"]["pageProps"]["mainColumnData"]
+    _, stars_group = main_column["principalCreditsV2"]
+    main_column["principalCreditsV2"] = [stars_group]
+
+    series = parsers.parse_json_movie(raw_json)
+    assert series is not None
+    assert series.info_series.creators == []
+    assert [person.name for person in series.stars] == [
+        "Andrew Lincoln",
+        "Norman Reedus",
+        "Melissa McBride",
+    ]
+
+
+def test_parse_json_series_creators_use_credit_group_id():
+    raw_json = load_sample("sample_series.json")
+    main_column = raw_json["props"]["pageProps"]["mainColumnData"]
+    creator_group, stars_group = main_column["principalCreditsV2"]
+    creator_group["grouping"]["text"] = "Ideazione"
+    creator_group["credits"].append(stars_group["credits"][0])
+    main_column["principalCreditsV2"] = [stars_group, creator_group]
+
+    series = parsers.parse_json_movie(raw_json)
+    assert series is not None
+    assert [person.name for person in series.info_series.creators] == [
+        "Frank Darabont",
+        "Andrew Lincoln",
+    ]
+    assert any(person.name == "Andrew Lincoln" for person in series.stars)
+
+
 def test_parse_awards_with_valid_data():
     awards_node = [
         5,  # wins

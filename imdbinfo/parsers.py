@@ -62,6 +62,9 @@ from .transformers import (
 VIDEO_URL = "https://www.imdb.com/video/"
 TITLE_URL = "https://www.imdb.com/title/"
 COMPANY_URL = "https://www.imdb.com/company/"
+CREATOR_CREDIT_GROUP_ID = (
+    "amzn1.imdb.concept.name_credit_group.85198717-6c2d-481e-93a5-47858774bcce"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -581,7 +584,8 @@ def parse_json_movie(raw_json) -> Optional[MovieDetail]:
             )
             or [],
             creators=pjmespatch(
-                "props.pageProps.mainColumnData.principalCreditsV2[0].credits[]",
+                "props.pageProps.mainColumnData.principalCreditsV2"
+                f"[?grouping.groupingId=='{CREATOR_CREDIT_GROUP_ID}'].credits[]",
                 raw_json,
                 _parse_creators,
             ),
