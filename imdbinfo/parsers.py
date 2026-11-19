@@ -162,13 +162,16 @@ def _parse_directors_crewv2(result):
     ]
 
 
-def _parse_creators(result):
-    if result is None:
+def _parse_creators(principal_credits_groups) -> List[Person]:
+    if not principal_credits_groups:
         return []
     return [
-        Person.from_creators(a)
-        for a in result
-        if a.get("name") and a.get("name").get("id")
+        Person.from_creators(credit)
+        for group in principal_credits_groups
+        if group
+        and (group.get("grouping") or {}).get("groupingId") == CREATOR_CREDIT_GROUP_ID
+        for credit in (group.get("credits") or [])
+        if credit and (credit.get("name") or {}).get("id")
     ]
 
 
@@ -584,8 +587,7 @@ def parse_json_movie(raw_json) -> Optional[MovieDetail]:
             )
             or [],
             creators=pjmespatch(
-                "props.pageProps.mainColumnData.principalCreditsV2"
-                f"[?grouping.groupingId=='{CREATOR_CREDIT_GROUP_ID}'].credits[]",
+                "props.pageProps.mainColumnData.principalCreditsV2",
                 raw_json,
                 _parse_creators,
             ),
